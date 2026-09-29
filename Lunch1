@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>公司午餐自動統計工具</title>
+    <!-- Tailwind CSS (樣式庫) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tesseract.js (LINE 截圖辨識模組) -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <!-- Lucide Icons (圖示庫) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { -webkit-tap-highlight-color: transparent; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans pb-20">
+
+    <!-- 頂部標題列 -->
+    <header class="bg-indigo-600 text-white p-4 sticky top-0 z-50 shadow-md flex justify-between items-center">
+        <h1 class="text-lg font-bold flex items-center gap-2">
+            <i data-lucide="utensils"></i> 午餐訂購統計助手
+        </h1>
+        <button onclick="clearAll()" class="text-xs bg-indigo-700 hover:bg-indigo-800 px-3 py-1.5 rounded-lg transition flex items-center gap-1">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> 清空資料
+        </button>
+    </header>
+
+    <main class="max-w-md mx-auto p-4 space-y-4">
+
+        <!-- 上傳 LINE 截圖區塊 -->
+        <section class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <h2 class="font-bold text-slate-700 mb-2 flex items-center gap-1.5 text-sm">
+                <i data-lucide="image" class="text-indigo-500 w-4 h-4"></i> 自動辨識 LINE 投票/記事本截圖
+            </h2>
+            
+            <label class="border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/50 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition">
+                <i data-lucide="upload-cloud" class="w-8 h-8 text-indigo-500 mb-1"></i>
+                <span class="text-xs text-slate-600 font-medium">點擊上傳或貼上 LINE 截圖</span>
+                <span class="text-[10px] text-slate-400 mt-0.5">自動辨識：品項、單價、訂購者</span>
+                <input type="file" id="imageInput" accept="image/*" class="hidden" onchange="processImage(this.files[0])">
+            </label>
+
+            <!-- 辨識中 Loading -->
+            <div id="loading" class="hidden mt-3 text-center p-3 bg-slate-50 rounded-lg border border-slate-100">
+                <div class="inline-block animate-spin rounded-full h-5 w-5 border-2 border-indigo-600 border-t-transparent mb-1"></div>
+                <p class="text-xs text-indigo-600 font-medium" id="loadingText">文字辨識中，請稍候...</p>
+            </div>
+        </section>
+
+        <!-- 手動新增/修改單筆資料 -->
+        <section class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <h2 class="font-bold text-slate-700 mb-2 flex items-center gap-1.5 text-sm">
+                <i data-lucide="plus-circle" class="text-indigo-500 w-4 h-4"></i> 手動新增項目
+            </h2>
+            <form id="orderForm" onsubmit="addOrder(event)" class="space-y-2">
+                <div class="grid grid-cols-2 gap-2">
+                    <input type="text" id="itemName" placeholder="項目 (例: 排骨飯)" required class="text-sm p-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <input type="number" id="itemPrice" placeholder="金額 (例: 100)" required class="text-sm p-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                </div>
+                <input type="text" id="buyerName" placeholder="訂購人 (多位請用逗號隔開，例: 00, 11)" required class="w-full text-sm p-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                <button type="submit" class="w-full bg-indigo-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-indigo-700 transition">
+                    加入清單
+                </button>
+            </form>
+        </section>
+
+        <!-- 總計卡片 (各項目總數/總價、全部總數/總價) -->
+        <section class="bg-gradient-to-r from-indigo-600 to-indigo-700 text-white p-4 rounded-xl shadow-md space-y-3">
+            <div class="flex justify-between items-center border-b border-indigo-400/40 pb-2">
+                <span class="text-xs opacity-80">全單總訂購數</span>
+                <span class="text-xl font-extrabold" id="grandTotalCount">0 份</span>
+            </div>
+            <div class="flex justify-between items-center">
+                <span class="text-xs opacity-80">全單總金額</span>
+                <span class="text-2xl font-black text-yellow-300" id="grandTotalPrice">$ 0</span>
+            </div>
+        </section>
+
+        <!-- 各項目明細與統計表格 -->
+        <section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="p-3 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 text-sm flex justify-between items-center">
+                <span>訂購明細與統計</span>
+                <span class="text-xs font-normal text-slate-500" id="itemTypeCount">共 0 項</span>
+            </div>
+
+            <div id="orderList" class="divide-y divide-slate-100">
+                <!-- 動態渲染項目明細 -->
+                <div class="p-4 text-center text-slate-400 text-xs">尚無資料，請上傳截圖或手動新增。</div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        // 初始化 Lucide 圖示
+        lucide.createIcons();
+
+        // 訂單資料陣列
+        let orders = [];
+
+        // 手動新增資料
+        function addOrder(e) {
+            e.preventDefault();
+            const name = document.getElementById('itemName').value.trim();
+            const price = parseFloat(document.getElementById('itemPrice').value) || 0;
+            const buyerInput = document.getElementById('buyerName').value;
+            
+            // 處理訂購人（支援逗號/頓點/空格分開）
+            const buyers = buyerInput.split(/[,，\s]+/).filter(b => b.trim() !== '');
+
+            if(name && price >= 0 && buyers.length > 0) {
+                // 檢查是否已存在該項目與金額
+                const existing = orders.find(o => o.name === name && o.price === price);
+                if(existing) {
+                    existing.buyers.push(...buyers);
+                } else {
+                    orders.push({ name, price, buyers });
+                }
+                
+                // 清空輸入欄
+                document.getElementById('orderForm').reset();
+                render();
+            }
+        }
+
+        // 清除單一品項
+        function deleteOrder(index) {
+            orders.splice(index, 1);
+            render();
+        }
+
+        // 清空全部
+        function clearAll() {
+            if(confirm('確定要清空所有訂單資料嗎？')) {
+                orders = [];
+                render();
+            }
+        }
+
+        // 渲染 UI 畫面
+        function render() {
+            const listEl = document.getElementById('orderList');
+            let grandTotalCount = 0;
+            let grandTotalPrice = 0;
+
+            if (orders.length === 0) {
+                listEl.innerHTML = `<div class="p-8 text-center text-slate-400 text-xs">尚無資料，請上傳截圖或手動新增。</div>`;
+                document.getElementById('grandTotalCount').innerText = `0 份`;
+                document.getElementById('grandTotalPrice').innerText = `$ 0`;
+                document.getElementById('itemTypeCount').innerText = `共 0 項`;
+                return;
+            }
+
+            listEl.innerHTML = '';
+
+            orders.forEach((item, index) => {
+                const count = item.buyers.length;
+                const subtotal = count * item.price;
+                grandTotalCount += count;
+                grandTotalPrice += subtotal;
+
+                const itemHtml = `
+                    <div class="p-3 space-y-1.5">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <span class="font-bold text-slate-800 text-sm">${item.name}</span>
+                                <span class="text-xs text-slate-400 ml-1">($${item.price})</span>
+                            </div>
+                            <button onclick="deleteOrder(${index})" class="text-slate-300 hover:text-red-500">
+                                <i data-lucide="x" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                        <div class="text-xs text-slate-600 bg-slate-50 p-2 rounded border border-slate-100 break-words">
+                            <span class="font-semibold text-slate-500">訂購人 (${count}人)：</span>
+                            ${item.buyers.map(b => `<span class="inline-block bg-white border border-slate-200 px-1.5 py-0.5 rounded text-[11px] mr-1 mb-1">${b}</span>`).join('')}
+                        </div>
+                        <div class="flex justify-between items-center text-xs pt-1 border-t border-slate-50">
+                            <span class="text-slate-500">項目總數：<strong class="text-indigo-600">${count}</strong> 份</span>
+                            <span class="text-slate-500">項目總價：<strong class="text-indigo-600">$${subtotal}</strong></span>
+                        </div>
+                    </div>
+                `;
+                listEl.innerHTML += itemHtml;
+            });
+
+            document.getElementById('grandTotalCount').innerText = `${grandTotalCount} 份`;
+            document.getElementById('grandTotalPrice').innerText = `$ ${grandTotalPrice}`;
+            document.getElementById('itemTypeCount').innerText = `共 ${orders.length} 項`;
+            lucide.createIcons();
+        }
+
+        // Tesseract.js 文字辨識邏輯
+        async function processImage(file) {
+            if (!file) return;
+
+            const loadingEl = document.getElementById('loading');
+            const loadingText = document.getElementById('loadingText');
+            loadingEl.classList.remove('hidden');
+
+            try {
+                loadingText.innerText = "正在辨識圖片中的文字...";
+                
+                // 使用 Tesseract 解析繁體中文 (chi_tra) 及英文 (eng)
+                const worker = await Tesseract.createWorker('chi_tra+eng');
+                const ret = await worker.recognize(file);
+                await worker.terminate();
+
+                const text = ret.data.text;
+                loadingText.innerText = "正在解析訂單資料...";
+                parseLineText(text);
+
+            } catch (err) {
+                alert("圖片辨識失敗，請嘗試手動輸入或上傳更清晰的截圖。");
+                console.error(err);
+            } finally {
+                loadingEl.classList.add('hidden');
+            }
+        }
+
+        // 針對 LINE 投票/記事本常見格式解析
+        function parseLineText(rawText) {
+            const lines = rawText.split('\n');
+            
+            lines.forEach(line => {
+                line = line.trim();
+                if (!line) return;
+
+                // 正則表達式匹配邏輯：
+                // 嘗試提取：[品項名稱] + [金額] + [訂購人列表]
+                // 常見格式範例：
+                // 1. 排骨飯 100元 : 小明, 小華
+                // 2. 雞腿便當 $110 - 00, 11
+                // 3. 珍珠奶茶 60 (小明)
+                
+                // 匹配金額 (尋找數字，可能帶有 $ 或 元)
+                const priceMatch = line.match(/(?:\$|NT\$?\s*)?(\d+)(?:\s*元)?/i);
+                
+                if (priceMatch) {
+                    const price = parseFloat(priceMatch[1]);
+                    
+                    // 以金額數字為界線切分品項與人名
+                    const parts = line.split(priceMatch[0]);
+                    let name = parts[0].replace(/^[\d\.\-\*\s]+/, '').trim(); // 去除開頭標號 (如 1. 或 - )
+                    let buyerPart = parts.slice(1).join(' ');
+
+                    // 清理人名區塊（去除冒號、括號等符號）
+                    buyerPart = buyerPart.replace(/[:：\(\)（）\-]/g, ' ').trim();
+                    const buyers = buyerPart.split(/[,，\s]+/).filter(b => b.trim() !== '');
+
+                    if (name && !isNaN(price) && buyers.length > 0) {
+                        const existing = orders.find(o => o.name === name && o.price === price);
+                        if(existing) {
+                            existing.buyers.push(...buyers);
+                        } else {
+                            orders.push({ name, price, buyers });
+                        }
+                    }
+                }
+            });
+
+            render();
+        }
+    </script>
+</body>
+</html>
