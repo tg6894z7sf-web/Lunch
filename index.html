@@ -31,13 +31,13 @@
         <!-- 上傳 LINE 截圖區塊 -->
         <section class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
             <h2 class="font-bold text-slate-700 mb-2 flex items-center gap-1.5 text-sm">
-                <i data-lucide="image" class="text-indigo-500 w-4 h-4"></i> 自動辨識 LINE 投票/記事本截圖
+                <i data-lucide="image" class="text-indigo-500 w-4 h-4"></i> 自動辨識 LINE 投票截圖
             </h2>
             
             <label class="border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/50 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer transition">
                 <i data-lucide="upload-cloud" class="w-8 h-8 text-indigo-500 mb-1"></i>
                 <span class="text-xs text-slate-600 font-medium">點擊上傳或貼上 LINE 截圖</span>
-                <span class="text-[10px] text-slate-400 mt-0.5">自動辨識：品項、單價、訂購者</span>
+                <span class="text-[10px] text-slate-400 mt-0.5">支援自動解析：品項、單價、投票人數</span>
                 <input type="file" id="imageInput" accept="image/*" class="hidden" onchange="processImage(this.files[0])">
             </label>
 
@@ -56,9 +56,9 @@
             <form id="orderForm" onsubmit="addOrder(event)" class="space-y-2">
                 <div class="grid grid-cols-2 gap-2">
                     <input type="text" id="itemName" placeholder="項目 (例: 排骨飯)" required class="text-sm p-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                    <input type="number" id="itemPrice" placeholder="金額 (例: 100)" required class="text-sm p-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                    <input type="number" id="itemPrice" placeholder="金額 (例: 90)" required class="text-sm p-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500">
                 </div>
-                <input type="text" id="buyerName" placeholder="訂購人 (多位請用逗號隔開，例: 00, 11)" required class="w-full text-sm p-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                <input type="text" id="buyerName" placeholder="訂購人或份數 (可填姓名以逗號隔開，或直接填數字如 6)" required class="w-full text-sm p-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500">
                 <button type="submit" class="w-full bg-indigo-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-indigo-700 transition">
                     加入清單
                 </button>
@@ -104,13 +104,18 @@
             e.preventDefault();
             const name = document.getElementById('itemName').value.trim();
             const price = parseFloat(document.getElementById('itemPrice').value) || 0;
-            const buyerInput = document.getElementById('buyerName').value;
+            const buyerInput = document.getElementById('buyerName').value.trim();
             
-            // 處理訂購人（支援逗號/頓點/空格分開）
-            const buyers = buyerInput.split(/[,，\s]+/).filter(b => b.trim() !== '');
+            let buyers = [];
+            // 如果輸入純數字，自動生成對應份數標籤
+            if (/^\d+$/.test(buyerInput)) {
+                const num = parseInt(buyerInput, 10);
+                buyers = Array.from({ length: num }, (_, i) => `份數${i + 1}`);
+            } else {
+                buyers = buyerInput.split(/[,，\s]+/).filter(b => b.trim() !== '');
+            }
 
             if(name && price >= 0 && buyers.length > 0) {
-                // 檢查是否已存在該項目與金額
                 const existing = orders.find(o => o.name === name && o.price === price);
                 if(existing) {
                     existing.buyers.push(...buyers);
@@ -118,7 +123,6 @@
                     orders.push({ name, price, buyers });
                 }
                 
-                // 清空輸入欄
                 document.getElementById('orderForm').reset();
                 render();
             }
@@ -172,12 +176,12 @@
                             </button>
                         </div>
                         <div class="text-xs text-slate-600 bg-slate-50 p-2 rounded border border-slate-100 break-words">
-                            <span class="font-semibold text-slate-500">訂購人 (${count}人)：</span>
+                            <span class="font-semibold text-slate-500">明細 (${count}份)：</span>
                             ${item.buyers.map(b => `<span class="inline-block bg-white border border-slate-200 px-1.5 py-0.5 rounded text-[11px] mr-1 mb-1">${b}</span>`).join('')}
                         </div>
                         <div class="flex justify-between items-center text-xs pt-1 border-t border-slate-50">
-                            <span class="text-slate-500">項目總數：<strong class="text-indigo-600">${count}</strong> 份</span>
-                            <span class="text-slate-500">項目總價：<strong class="text-indigo-600">$${subtotal}</strong></span>
+                            <span class="text-slate-500">各項目總數：<strong class="text-indigo-600">${count}</strong> 份</span>
+                            <span class="text-slate-500">各項目總價：<strong class="text-indigo-600">$${subtotal}</strong></span>
                         </div>
                     </div>
                 `;
@@ -201,13 +205,12 @@
             try {
                 loadingText.innerText = "正在辨識圖片中的文字...";
                 
-                // 使用 Tesseract 解析繁體中文 (chi_tra) 及英文 (eng)
                 const worker = await Tesseract.createWorker('chi_tra+eng');
                 const ret = await worker.recognize(file);
                 await worker.terminate();
 
                 const text = ret.data.text;
-                loadingText.innerText = "正在解析訂單資料...";
+                loadingText.innerText = "正在解析 LINE 投票資料...";
                 parseLineText(text);
 
             } catch (err) {
@@ -218,7 +221,7 @@
             }
         }
 
-        // 針對 LINE 投票/記事本常見格式解析
+        // 專為 LINE 投票截圖優化的解析邏輯
         function parseLineText(rawText) {
             const lines = rawText.split('\n');
             
@@ -226,31 +229,26 @@
                 line = line.trim();
                 if (!line) return;
 
-                // 正則表達式匹配邏輯：
-                // 嘗試提取：[品項名稱] + [金額] + [訂購人列表]
-                // 常見格式範例：
-                // 1. 排骨飯 100元 : 小明, 小華
-                // 2. 雞腿便當 $110 - 00, 11
-                // 3. 珍珠奶茶 60 (小明)
-                
-                // 匹配金額 (尋找數字，可能帶有 $ 或 元)
-                const priceMatch = line.match(/(?:\$|NT\$?\s*)?(\d+)(?:\s*元)?/i);
-                
-                if (priceMatch) {
-                    const price = parseFloat(priceMatch[1]);
-                    
-                    // 以金額數字為界線切分品項與人名
-                    const parts = line.split(priceMatch[0]);
-                    let name = parts[0].replace(/^[\d\.\-\*\s]+/, '').trim(); // 去除開頭標號 (如 1. 或 - )
-                    let buyerPart = parts.slice(1).join(' ');
+                // 排除無關介面字樣
+                if (line.includes('投票') || line.includes('建立者') || line.includes('已於')) return;
 
-                    // 清理人名區塊（去除冒號、括號等符號）
-                    buyerPart = buyerPart.replace(/[:：\(\)（）\-]/g, ' ').trim();
-                    const buyers = buyerPart.split(/[,，\s]+/).filter(b => b.trim() !== '');
+                // 清理 OCR 誤判符號
+                const cleanLine = line.replace(/^[✓✔☑️\s\.\-\*]+/, '').trim();
 
-                    if (name && !isNaN(price) && buyers.length > 0) {
+                // 彈性匹配：[品項名稱] + [金額] + [投票人數]
+                // 支援格式如：椒鹽雞柳（無飯）, $90 1 或 香煎雞柳（半飯） 90 6
+                const match = cleanLine.match(/^(.+?)(?:[,\s]+)?\$?\s*(\d+)\s+(\d+)$/);
+
+                if (match) {
+                    const name = match[1].trim();
+                    const price = parseFloat(match[2]);
+                    const count = parseInt(match[3], 10);
+
+                    if (name && !isNaN(price) && count > 0) {
+                        const buyers = Array.from({ length: count }, (_, i) => `份數${i + 1}`);
+                        
                         const existing = orders.find(o => o.name === name && o.price === price);
-                        if(existing) {
+                        if (existing) {
                             existing.buyers.push(...buyers);
                         } else {
                             orders.push({ name, price, buyers });
